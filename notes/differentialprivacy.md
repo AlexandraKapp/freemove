@@ -33,3 +33,4 @@ Of course, how much any individual contributes to the result of a database query
 The 2006 paper presents both a mathematical definition of differential privacy and a mechanism based on the addition of Laplace noise (i.e. noise coming from the Laplace distribution) that satisfies the definition
 
 Epsilon (ε): A metric of privacy loss at a differentially change in data (adding, removing 1 entry). The smaller the value is, the better privacy protection.
+
