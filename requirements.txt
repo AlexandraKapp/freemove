@@ -3,3 +3,5 @@ sklearn
 matplotlib
 pandas
 s2sphere
+keras
+gmplot
