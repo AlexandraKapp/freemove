@@ -17,35 +17,35 @@ from tensorflow.keras.models import load_model
 #import itertools
 #import gmplot
 from tensorflow.keras.models import load_model
+from data_preprocessing import *
+
 
 def prepare_dataset():
     f = open('/Users/jh/github/freemove/data/tapas_single_coordinates.csv')
     gps_logs = csv.reader(f)
-
     raw_logs = []
     for row in gps_logs:
         raw_logs.append(row)
 
-    logs = np.array(raw_logs)
-    time = logs[1:,5]
-    lat = logs[1:,0]
-    lng = logs[1:,1]
-    return lat,lng
+    return np.array(raw_logs)
+
+logs = prepare_dataset()
+
+# divide into train and generation set by seperating by user
+
+#keep order of steps
+#omit everything exept for lat long
+
+#conver to s2sphere
+
+time = logs[1:,5]
+lat = logs[1:,0]
+lng = logs[1:,1]
 
 
-lat, lng = prepare_dataset()
 
 r = s2sphere.RegionCoverer()
 
-
-grids = []
-#print(float(lat[0]), float(lng[0]))
-p = s2sphere.LatLng.from_degrees(float(lat[0]), float(lng[0]))
-c = s2sphere.CellId.from_lat_lng(p)
-cellid = c.id()
-#print(cellid)
-ll = s2sphere.CellId(cellid).to_lat_lng()
-#print(ll)
 
 # convert an array of values into a dataset matrix
 def create_dataset(dataset, look_back=1):
@@ -58,6 +58,7 @@ def create_dataset(dataset, look_back=1):
 
 dt = []
 
+#convert latlong to cellIDs
 for i in range(0, len(lat)):
     p = s2sphere.LatLng.from_degrees(float(lat[i]), float(lng[i]))
     c = s2sphere.CellId.from_lat_lng(p)
@@ -94,6 +95,7 @@ trainX = np.reshape(trainX, (trainX.shape[0], trainX.shape[1], 1))
 testX = np.reshape(testX, (testX.shape[0], testX.shape[1], 1))
 
 
+trainX, trainY, testX, testY = generate_data()
 
 # create and fit the LSTM network
 model = Sequential()
@@ -102,7 +104,7 @@ model.add(Dense(1))
 model.compile(loss='mean_squared_error', optimizer='adam')
 
 
-model.fit(trainX, trainY, nb_epoch=1, batch_size=1, verbose=2)
+model.fit(trainX, trainY, epochs=10, batch_size=1, verbose=1)
 
 #model.save('traffic_gen01.h5')  # creates a HDF5 file 'my_model.h5'
 """
@@ -115,7 +117,7 @@ model.save_weights("traffic_gen.h5")
 print("Saved model to disk")
 
 
-print 'training done!'
+print('training done!')
 predict = model.predict(testX)
 trajectory = []
 for i in range(0, 1000):
@@ -135,9 +137,12 @@ for i in range(0, len(s_c_id)):
     lat = latlng[0].split(':', 1)
     map_lat.append(float(lat[1]))
     map_lng.append(float(latlng[1]))
+
 #print map_lat
 #print map_lng
 plt.plot(map_lat, map_lng)
+
+
 plt.show()
 gmap = gmplot.GoogleMapPlotter(46.519962, 6.633597, 16)
 gmap.plot(map_lat, map_lng, '#000000', edge_width=20)
