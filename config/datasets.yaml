@@ -1,0 +1,7 @@
+tapas_big_path : '/Users/jh/github/freemove/data/tapas_big_single_coordinates.csv'
+tapas_big_str  : 'TAPAS full dataset'
+tapas_big_name : 'tapas_big'
+
+tapas_small_path : '/Users/jh/github/freemove/data/tapas_single_coordinates.csv'
+tapas_small_str  : 'TAPAS subset dataset'
+tapas_small_name : 'tapas_small'
