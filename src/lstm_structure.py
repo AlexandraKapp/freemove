@@ -2,8 +2,7 @@ import argparse
 from keras.models import Sequential
 from keras.layers import Dense
 from keras.layers import LSTM
-from utils import print_dataset_info, repeat_and_collate, prepare_dataset, generate_output_df, save_results, predict_synthetic
-
+from utils import predict_synthetic_new, print_dataset_info, repeat_and_collate, prepare_dataset, reverse_data, generate_output_df, save_results
 
 
 def classify(**args):
@@ -46,14 +45,17 @@ def classify(**args):
     # train and evaluate
     model.fit(d['train_X'], d['train_Y'], epochs=d['epochs'], batch_size=d['batch_size'], verbose=2)
 
-    #d['lookback] übergeben
-    pred_coordinates = predict_synthetic(model, d['startpoints'], d['train_scaler'], d)
 
-    output_df = generate_output_df(d['test'], pred_coordinates)
+    pred_coordinates = predict_synthetic_new(model, d['startpoints'], d['lookback'])
+
+    #pred_coordinates = reverse_data(pred_coordinates, d['scaler'], d['tesselation'])
+    #print(pred_coordinates.shape)
+    test = reverse_data(d['test'], d['scaler'], d['tesselation'], test=True)
+
+    #output_df = generate_output_df(test, pred_coordinates)
     
-    save_results(output_df)
-
-    return 
+    #save_results(output_df)
+    return
 
 
 if __name__ == '__main__':

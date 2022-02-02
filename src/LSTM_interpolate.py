@@ -1,3 +1,4 @@
+from re import T
 import numpy as np
 import pandas as pd
 import s2sphere
@@ -13,7 +14,7 @@ from keras.models import load_model
 import tensorflow as tf
 from geojson import LineString, Feature, FeatureCollection, dump
 import h3
-from utils import add_h3, reverse_h3, shuffle_trips, train_test_split, interpolate_tesselation, final_lookback, get_startpoints
+from utils import add_h3, add_s2sphere, predict_synthetic_new, reverse_h3, shuffle_trips, train_test_split, interpolate_tesselation, final_lookback, get_startpoints
 
 
 path = '/Users/jh/github/freemove/data/tapas_single_coordinates.csv'
@@ -74,7 +75,7 @@ def generate_output_df(test_coordinates, pred_coordinates):
 #     df = np.unique(df)
 #     print('Number of unique values: ', len(df))
     
-def predict_synthetic(model, startpoints, scaler, tesselation, lookback):
+def predict_synthetic(model, startpoints, lookback):
     
     while startpoints.shape[1] < 500:
         predict = model.predict(startpoints[:, :lookback, :])
@@ -94,48 +95,33 @@ def generate_data(path):
     df_train, df_test = train_test_split(df, train_size=0.8)
     
 
-
-    all_data = interpolate_tesselation(df)
-    train = interpolate_tesselation(df_train)
-    train_reverse = reverse_h3(train)
-    #print('Train shape after interpolation, tesselation: ', train.shape)
-    test = interpolate_tesselation(df_test)
+    all_data = interpolate_tesselation(df, tesselation=add_h3)
+    train = interpolate_tesselation(df_train, tesselation=add_h3)
+    test = interpolate_tesselation(df_test, tesselation=add_h3)
     startpoints = get_startpoints(test)  
 
-    #print('Startpoints shape after interpolation, tesselation: ', startpoints.shape)
-    #print(startpoints)
-    #train, startpoints = split_data(df, tesselation=add_h3)
-    #unique_values(train)
-    #unique_values(startpoints)
-    #print(train.shape)
-    num_trips = train.shape[0]
-    #print(num_trips)
 
     #normalize and reshape
     scaler = MinMaxScaler(feature_range=(0, 1))
     all_data = all_data.reshape(-1,1)
     scaler.fit(all_data)
 
-
     print('Train shape before reshape: ', train.shape)
     train = train.reshape(-1,1)
-
     train = scaler.transform(train)
     print('Train shape after normalisation: ', train.shape)
     train = np.reshape(train, (80, 500))
     print('Train shape after reshape: ', train.shape)
-    
-    lookback = 3
-    #trainX, trainY = transform_data(train)
-    trainX, trainY = final_lookback(train, previous=lookback)
-
     startpoints_shape = startpoints.shape
     startpoints = startpoints.reshape(-1,1)
-    #print(startpoints)
     startpoints = scaler.transform(startpoints)
     startpoints = np.reshape(startpoints, startpoints_shape)
     print('Startpoints shape after normalisation: ', startpoints.shape)
-    #print(startpoints)
+
+
+    lookback = 3
+    #trainX, trainY = transform_data(train)
+    trainX, trainY = final_lookback(train, previous=lookback)
 
 
     #Create dataset with lookback
@@ -176,9 +162,9 @@ def generate_data(path):
     #print(new.shape)
     #trajectory.append(startpoints)
 
-    coord = predict_synthetic(model, startpoints, scaler, add_h3, lookback)
+    coord = predict_synthetic_new(model, startpoints, lookback)
     coord = np.reshape(coord, (coord.shape[0], coord.shape[1]))
-    coord = scaler.inverse_transform(coord)
+    #coord = scaler.inverse_transform(coord)
     print(np.amin(test))
     print(np.amin(coord))
     print(coord.shape)
@@ -205,50 +191,50 @@ def generate_data(path):
     #         trajectory.append(predict)
     #         trajectory.append(scaler.inverse_transform(predict)) #inverse normalization
 
-    s_c_id = list(itertools.chain(*trajectory)) #change to one iterable
+    # s_c_id = list(itertools.chain(*trajectory)) #change to one iterable
 
-    #make list of cellIDs
-    cellId = []
-    for i in range(0, len(s_c_id)):
-        cellId.append(s_c_id[i][0])
-    cellId = list(map(int, cellId))
+    # #make list of cellIDs
+    # cellId = []
+    # for i in range(0, len(s_c_id)):
+    #     cellId.append(s_c_id[i][0])
+    # cellId = list(map(int, cellId))
 
-    #get lat and lng from CellIDs
-    map_lat = []
-    map_lng = []
-    for i in range(0, len(s_c_id)):
-        ll = str(s2sphere.CellId(cellId[i]).to_lat_lng())
-        latlng = ll.split(',', 1)
-        lat = latlng[0].split(':', 1)
-        map_lat.append(float(lat[1]))
-        map_lng.append(float(latlng[1]))
+    # #get lat and lng from CellIDs
+    # map_lat = []
+    # map_lng = []
+    # for i in range(0, len(s_c_id)):
+    #     ll = str(s2sphere.CellId(cellId[i]).to_lat_lng())
+    #     latlng = ll.split(',', 1)
+    #     lat = latlng[0].split(':', 1)
+    #     map_lat.append(float(lat[1]))
+    #     map_lng.append(float(latlng[1]))
 
-    #add coordinates to output
-    pred_coordinates = list(zip(map_lat, map_lng))
+    # #add coordinates to output
+    # pred_coordinates = list(zip(map_lat, map_lng))
 
-    #TODO make output a list not dict because dict unordered
-    #if test is also two lists then merge into df?
-    #then save as geojson? or directly put lists into a geodf?
+    # #TODO make output a list not dict because dict unordered
+    # #if test is also two lists then merge into df?
+    # #then save as geojson? or directly put lists into a geodf?
 
-    #coordinates_output = []
-    #type_output = ['synthetic'*len(coordinates)]
-    #output = {'Type':[],'Coordinates':[]}
-    #output['Type'].append('synthetic')
-    #output['Coordinates'].append(LineString(coordinates))
+    # #coordinates_output = []
+    # #type_output = ['synthetic'*len(coordinates)]
+    # #output = {'Type':[],'Coordinates':[]}
+    # #output['Type'].append('synthetic')
+    # #output['Coordinates'].append(LineString(coordinates))
 
     
-    test_coordinates = save_test_set(df)
-    output_df = generate_output_df(test_coordinates, pred_coordinates)
+    # test_coordinates = save_test_set(df)
+    # output_df = generate_output_df(test_coordinates, pred_coordinates)
 
-    #output_df = output_df.append(output, ignore_index=True)
-    print(output_df.head())
-    #output_df.to_csv('/Users/jh/github/freemove/data/synthetic_data.csv')
-    save_as_geojson(output_df)
+    # #output_df = output_df.append(output, ignore_index=True)
+    # print(output_df.head())
+    # #output_df.to_csv('/Users/jh/github/freemove/data/synthetic_data.csv')
+    # save_as_geojson(output_df)
 
 
-    #save synthetic trajectories to csv
-    #pred_df = pd.DataFrame.from_dict(output)
-    #pred_df.to_csv('/Users/jh/github/freemove/data/predictions_both.csv')
+    # #save synthetic trajectories to csv
+    # #pred_df = pd.DataFrame.from_dict(output)
+    # #pred_df.to_csv('/Users/jh/github/freemove/data/predictions_both.csv')
 
 
 

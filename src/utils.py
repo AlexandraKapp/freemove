@@ -11,6 +11,30 @@ import itertools
 import random
 import h3
 
+
+def add_s2sphere(lat, lng):
+    """
+    Add Cell ID by s2sphere
+
+    :param lat: Latitude
+    :param lng: Longitude
+    :returns:   Unique cell ID 
+    """
+
+    r = s2sphere.RegionCoverer()
+
+    r.max_level = 20
+    r.min_level = 5
+    r.max_cells = 5000
+
+    cellIDs = []
+    for i in range(0, len(lat)):
+        p = s2sphere.LatLng.from_degrees(float(lat[i]), float(lng[i]))
+        c = s2sphere.CellId.from_lat_lng(p)
+        cellIDs.append(c.id())
+
+    return cellIDs
+
 def add_h3(lat,lng, resolution=13):
     """
     Add unique cell Id by Uber H3 for each coordinate pair
@@ -29,6 +53,16 @@ def add_h3(lat,lng, resolution=13):
 
     return h3_indexes
 
+
+def predict_synthetic_new(model, startpoints, lookback):
+    
+    while startpoints.shape[1] < 500:
+        predict = model.predict(startpoints[:, -lookback:, :])
+        predict = np.reshape(predict, (predict.shape[0], predict.shape[1], 1))
+        startpoints = np.hstack((startpoints, predict))
+
+    return startpoints
+
 def reverse_h3(h3_indexes):
     """
     Convert h3 indexes to X and Y coordinate pairs
@@ -36,13 +70,16 @@ def reverse_h3(h3_indexes):
     :param h3_indexes:  List of h3 indexes as H3Index (uint64_t)
     :returns:           List of X and Y coordinates
     """
-    
+
     coordinates = []
-    for str in h3_indexes:
-        h3 = h3.string_to_h3(str) # Converts an H3 64-bit integer index to a hexadecimal string.
-        geo = h3.h3_to_geo(h3) # Return the center point of an H3 cell as a lat/lng pair.
-        coordinates.append(geo)
-    return coordinates
+    for sample in h3_indexes:
+        new_sample = []
+        for index in sample:
+            h3_string = h3.h3_to_string(index) # Converts an H3 64-bit integer index to a hexadecimal string.
+            geo = h3.h3_to_geo(h3_string) # Return the center point of an H3 cell as a lat/lng pair.
+            new_sample.append(geo)
+        coordinates.append(new_sample)
+    return np.array(coordinates)
 
 
 def repeat_and_collate(classify_fn, **args):
@@ -144,14 +181,19 @@ def prepare_dataset(dataset_choice, batchsize, look_back, tesselation, epochs, n
     elif normalisation == 1:
         norm_function = normalise_minmax
 
+    if tesselation == 0:
+        tess_function = 's2sphere'
+    elif tesselation == 1:
+        tess_function = 'h3'
+
     df = pd.read_csv(data_path)
 
     df = shuffle_trips(df)
 
     df_train, df_test = train_test_split(df, train_size=0.8)
 
-    train = interpolate_tesselation(df_train)
-    test = interpolate_tesselation(df_test)
+    train = interpolate_tesselation(df_train, tesselation= tess_function)
+    test = interpolate_tesselation(df_test, tesselation= tess_function)
     startpoints = get_startpoints(test)
 
     #normalize and reshape
@@ -168,7 +210,7 @@ def prepare_dataset(dataset_choice, batchsize, look_back, tesselation, epochs, n
     startpoints = np.reshape(startpoints, (startpoints_shape))
     
 
-    trainX, trainY = final_lookback(train, previous=3)
+    trainX, trainY = final_lookback(train, previous=look_back)
     trainX = np.reshape(trainX, (trainX.shape[0], trainX.shape[1], 1))
 
 
@@ -192,16 +234,35 @@ def prepare_dataset(dataset_choice, batchsize, look_back, tesselation, epochs, n
         'train_Y'      : trainY,
         'test'         : test,
         'startpoints'  : startpoints,
-        'tesselation'  : tesselation,
+        'tesselation'  : tess_function,
+        'lookback'     : look_back,
         'batch_size'   : batchsize,
         'norm_function': norm_function.__name__,
-        'train_scaler' : scaler,
+        'scaler' : scaler,
         #'start_scaler' : start_scaler,
         'epochs'       : epochs,
         'data_str'     : data_str}
 
+def reverse_data(data, scaler, tesselation, test=False):
 
-def interpolate_tesselation(df, tesselation=add_h3):
+    new_data = []
+    for sample in data:
+        if test==False:
+            sample = scaler.inverse_transform(sample)
+        elif test==True:
+            pass
+        if tesselation == 's2sphere':
+            sample = reverse_s2sphere(sample)
+        elif tesselation == 'h3':
+            sample = reverse_h3(sample)
+        new_data.append(sample)
+
+    return np.array(new_data)
+
+
+
+
+def interpolate_tesselation(df, tesselation='h3'):
     """
     Takes DataFrame and interpolates the X and Y coordinates, converts them into tesselation cell IDs
 
@@ -215,7 +276,10 @@ def interpolate_tesselation(df, tesselation=add_h3):
         trip = df.loc[df['TRIP_ID|integer'] == tripID]
         X, Y = trip['X'], trip['Y']
         X, Y = interpolate(X, Y, num_points=500)
-        tesselation_cells = tesselation(X,Y)
+        if tesselation == 'h3':
+            tesselation_cells = add_h3(X,Y)
+        else:
+            tesselation_cells = add_s2sphere(X,Y)
         data.append(tesselation_cells)
     return np.array(data)
 
@@ -304,7 +368,7 @@ def split_data(df, split=0.9):
             X = trip['X']
             Y = trip['Y']
             X, Y = interpolate(X,Y)
-            cellID = add_cellID(X,Y)
+            cellID = add_s2sphere(X,Y)
 
             if counter < num_trips*split:
                 train.append(cellID)
@@ -331,28 +395,7 @@ def data_lookback(df, previous=1):
         dataY.append(df[i + previous, 0])
     return np.array(dataX), np.array(dataY)
 
-def add_cellID(lat, lng):
-    """
-    Add Cell ID by s2sphere
 
-    :param lat: Latitude
-    :param lng: Longitude
-    :returns:   Unique cell ID 
-    """
-
-    r = s2sphere.RegionCoverer()
-
-    r.max_level = 20
-    r.min_level = 5
-    r.max_cells = 5000
-
-    cellIDs = []
-    for i in range(0, len(lat)):
-        p = s2sphere.LatLng.from_degrees(float(lat[i]), float(lng[i]))
-        c = s2sphere.CellId.from_lat_lng(p)
-        cellIDs.append(c.id())
-
-    return cellIDs
 
 def interpolate(x,y, num_points=500):
     """
