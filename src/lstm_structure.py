@@ -25,30 +25,34 @@ def classify(**args):
 
     print_dataset_info(d)
 
-    # create and fit the LSTM network
+  # create and fit the LSTM network
     model = Sequential()
-    model.add(LSTM(4, input_dim=1))
+    ####model.add(LSTM(4, input_dim=1))
+    model.add(LSTM(10, activation='relu', input_shape=(d['train_X'].shape[1], d['train_X'].shape[2])))
+    model.add(Dense(32))
     model.add(Dense(1))
+    model.compile(loss='mean_squared_error', optimizer='adam')
 
-    model.compile(optimizer='adam', loss='mean_squared_error')
+    # # create and fit the LSTM network
+    # model = Sequential()
+    # model.add(LSTM(4, input_dim=1))
+    # model.add(Dense(1))
+    # model.compile(optimizer='adam', loss='mean_squared_error')
 
     if allow_print:
         model.summary()
         print('')
 
-    # callback to log data for TensorBoard
-    # tb_callback = TensorBoard(log_dir='./results', histogram_freq=0, write_graph=True, write_images=True)
-
     # train and evaluate
     model.fit(d['train_X'], d['train_Y'], epochs=d['epochs'], batch_size=d['batch_size'], verbose=2)
 
+    #d['lookback] übergeben
     pred_coordinates = predict_synthetic(model, d['startpoints'], d['train_scaler'], d)
 
     output_df = generate_output_df(d['test'], pred_coordinates)
     
     save_results(output_df)
 
-    
     return 
 
 
@@ -75,7 +79,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '-b', '--batchsize',
         type=int,
-        default=64,
+        default=500,
         help='Target batch size of dataset preprocessing',
         dest='batch_size'
     )
@@ -100,7 +104,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '-lb', '--lookback',
         type=int,
-        default=2,
+        default=3,
         help='Number of lookbacks in dataset',
         dest='lookback_choice'
 
