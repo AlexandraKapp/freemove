@@ -11,6 +11,38 @@ import itertools
 import random
 import h3
 
+def add_h3(lat,lng, resolution=13):
+    """
+    Add unique cell Id by Uber H3 for each coordinate pair
+    
+    :param lat:         List of Latitudes
+    :param lng:         List of Longitudes
+    :param resolution:  Controls the size of the hexagon and the number of unique indexes (0 is coarsest and 15 is finest resolution), see https://h3geo.org/docs/core-library/restable/
+    :returns:           List with h3 indexes of the coordinates
+    """
+
+    h3_indexes = []
+    for i in range(0, len(lat)):
+        index = h3.geo_to_h3(lat[i], lng[i], resolution) # Indexes the location at the specified resolution, returning the index of the cell containing the location
+        index = h3.string_to_h3(index) # Converts the string representation to H3Index (uint64_t) representation.
+        h3_indexes.append(index) 
+
+    return h3_indexes
+
+def reverse_h3(h3_indexes):
+    """
+    Convert h3 indexes to X and Y coordinate pairs
+    
+    :param h3_indexes:  List of h3 indexes as H3Index (uint64_t)
+    :returns:           List of X and Y coordinates
+    """
+    
+    coordinates = []
+    for str in h3_indexes:
+        h3 = h3.string_to_h3(str) # Converts an H3 64-bit integer index to a hexadecimal string.
+        geo = h3.h3_to_geo(h3) # Return the center point of an H3 cell as a lat/lng pair.
+        coordinates.append(geo)
+    return coordinates
 
 
 def repeat_and_collate(classify_fn, **args):
@@ -116,26 +148,44 @@ def prepare_dataset(dataset_choice, batchsize, look_back, tesselation, epochs, n
 
     df = shuffle_trips(df)
 
-    #train test split
-    train, startpoints = split_data(df)
-    
+    df_train, df_test = train_test_split(df, train_size=0.8)
+
+    train = interpolate_tesselation(df_train)
+    test = interpolate_tesselation(df_test)
+    startpoints = get_startpoints(test)
+
     #normalize and reshape
-    train, train_scaler = norm_function(train)
-    startpoints, start_scaler = norm_function(startpoints)
+    scaler = MinMaxScaler(feature_range=(0, 1))
 
-    test = save_test_set(df)
+    train_shape = train.shape
+    train = train.reshape(-1,1)
+    train = scaler.fit_transform(train)
+    train = np.reshape(train, (train_shape))
 
-    #Create dataset with lookback
-    #look_back=2
-    trainX, trainY = data_lookback(train, look_back)
-
+    startpoints_shape = startpoints.shape
+    startpoints = startpoints.reshape(-1,1)
+    startpoints = scaler.fit_transform(startpoints)
+    startpoints = np.reshape(startpoints, (startpoints_shape))
     
-    # reshape input to be [samples, time steps, features]
+
+    trainX, trainY = final_lookback(train, previous=3)
     trainX = np.reshape(trainX, (trainX.shape[0], trainX.shape[1], 1))
 
 
-    # list of "class" names used for confusion matrices and validity testing. Not always classes, also subgroups or
-    # minerals, depending on classification targets
+    #OLD VERSION:
+    # #train test split
+    # train, startpoints = split_data(df)
+    # #normalize and reshape
+    # train, train_scaler = norm_function(train)
+    # startpoints, start_scaler = norm_function(startpoints)
+    # test = save_test_set(df)
+    # #Create dataset with lookback
+    # #look_back=2
+    # trainX, trainY = data_lookback(train, look_back)
+    # # reshape input to be [samples, time steps, features]
+    # trainX = np.reshape(trainX, (trainX.shape[0], trainX.shape[1], 1))
+
+
     return {
         'dataset_name' : data_name,
         'train_X'      : trainX,
@@ -145,12 +195,54 @@ def prepare_dataset(dataset_choice, batchsize, look_back, tesselation, epochs, n
         'tesselation'  : tesselation,
         'batch_size'   : batchsize,
         'norm_function': norm_function.__name__,
-        'train_scaler' : train_scaler,
-        'start_scaler' : start_scaler,
+        'train_scaler' : scaler,
+        #'start_scaler' : start_scaler,
         'epochs'       : epochs,
         'data_str'     : data_str}
 
 
+def interpolate_tesselation(df, tesselation=add_h3):
+    """
+    Takes DataFrame and interpolates the X and Y coordinates, converts them into tesselation cell IDs
+
+    :param df:              DataFrame
+    :param tesselation:     Function for tesselation
+    :returns:               Array with tesselation cells
+    """
+
+    data = []
+    for tripID in df['TRIP_ID|integer'].unique():
+        trip = df.loc[df['TRIP_ID|integer'] == tripID]
+        X, Y = trip['X'], trip['Y']
+        X, Y = interpolate(X, Y, num_points=500)
+        tesselation_cells = tesselation(X,Y)
+        data.append(tesselation_cells)
+    return np.array(data)
+
+
+def get_startpoints(data):
+    startpoints = []
+    for trip in data:
+        startpoints.append(trip[0:3])
+    startpoints = np.array(startpoints)
+    startpoints = np.reshape(startpoints, (startpoints.shape[0], startpoints.shape[1], 1))
+    return startpoints
+
+def final_lookback(df, previous=3):
+    """
+    Creates X and Y data with given lookback
+    TODO
+    """
+    dataX, dataY = [], []
+    for traj in df:
+        traj = np.array(traj)
+        traj = traj.reshape(-1,1)     
+        for i in range(len(traj)-previous):
+            a = traj[i:(i+previous), 0]
+            b = traj[i + previous, 0]
+            dataX.append(a)
+            dataY.append(np.array(b))
+    return np.array(dataX), np.array(dataY)
 
 def normalise_minmax(sample):
     """
@@ -285,23 +377,7 @@ def interpolate(x,y, num_points=500):
     return x_regular, y_regular
 
 
-def add_h3(lat,lng, resolution=13):
-    """
-    Add unique cell Id by Uber H3 for each coordinate pair
-    
-    :param lat:         List of Latitudes
-    :param lng:         List of Longitudes
-    :param resolution:  Controls the size of the hexagon and the number of unique indexes (0 is coarsest and 15 is finest resolution), see https://h3geo.org/docs/core-library/restable/
-    :returns:           List with h3 indexes of the coordinates
-    """
-    h3_indexes = []
 
-    for i in range(0, len(lat)):
-        index = h3.geo_to_h3(lat[i], lng[i], resolution)
-        h3_indexes.append(index)
-    
-    #return h3.geo_to_h3(lat, lng, resolution) 
-    return h3_indexes
 
 def save_test_set(df, split=0.8):
     """
@@ -380,51 +456,40 @@ def save_as_geojson(df, path):
         dump(feature_collection, f)
 
 
-def predict_synthetic(model, startpoints, scaler, tesselation):
+# def predict_synthetic(model, startpoints, scaler, tesselation):
     
-    trajectory = []
+#     trajectory = []
 
-    #predict synthetic data
-    for point in startpoints:
-        point = np.array(point)
-        point = point.reshape(-1,1)
-        predict = point
-        #predict = model.predict(point)
+#     #predict synthetic data
+#     for point in startpoints:
+#         point = np.array(point)
+#         point = point.reshape(-1,1)
+#         predict = point
+#         #predict = model.predict(point)
 
-        #trajectory = []
-        if scaler == None:
-            trajectory.append(predict)
-        else:
-            trajectory.append(scaler.inverse_transform(predict)) #inverse normalization
-        for i in range(0,499):
-            p = np.reshape(predict, (predict.shape[0], predict.shape[1], 1))
-            predict = model.predict(p)
-            if scaler==None:
-                trajectory.append(predict)
-            else:
-                trajectory.append(scaler.inverse_transform(predict)) #inverse normalization
+#         #trajectory = []
+#         if scaler == None:
+#             trajectory.append(predict)
+#         else:
+#             trajectory.append(scaler.inverse_transform(predict)) #inverse normalization
+#         for i in range(0,499):
+#             p = np.reshape(predict, (predict.shape[0], predict.shape[1], 1))
+#             predict = model.predict(p)
+#             if scaler==None:
+#                 trajectory.append(predict)
+#             else:
+#                 trajectory.append(scaler.inverse_transform(predict)) #inverse normalization
 
-    s_c_id = list(itertools.chain(*trajectory)) #change to one iterable
+#     s_c_id = list(itertools.chain(*trajectory)) #change to one iterable
 
-    if tesselation == 1:
-        pass
-    if tesselation == 0:
-        pred_coordinates = reverse_s2sphere(s_c_id)
+#     if tesselation == 1:
+#         pass
+#     if tesselation == 0:
+#         pred_coordinates = reverse_s2sphere(s_c_id)
 
-    return pred_coordinates
+#     return pred_coordinates
 
-def reverse_h3(h3_indexes):
-    """
-    Convert h3 indexes to X and Y coordinate pairs
-    
-    :param h3_indexes:  List of h3 indexes
-    :returns:           List of X and Y coordinates
-    """
-    coordinates = []
-    for index in h3_indexes:
-        geo = h3.h3_to_geo(s_c_id[index])
-        coordinates.append(geo)
-    return coordinates
+
 
 def reverse_s2sphere(cell_ids):
     """
