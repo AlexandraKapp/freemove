@@ -2,8 +2,7 @@ import argparse
 from keras.models import Sequential
 from keras.layers import Dense
 from keras.layers import LSTM
-from utils import predict_synthetic_new, print_dataset_info, repeat_and_collate, prepare_dataset, reverse_data, generate_output_df, save_results
-
+from utils import predict_synthetic_new, print_dataset_info, repeat_and_collate, prepare_dataset, reverse_data, save_as_geojson, save_csv
 
 def classify(**args):
     """
@@ -20,23 +19,18 @@ def classify(**args):
         args['lookback_choice'],
         args['tess_choice'],
         args['epochs'],
+        args['trainsize'],
         args['norm_choice'])
 
     print_dataset_info(d)
 
   # create and fit the LSTM network
     model = Sequential()
-    ####model.add(LSTM(4, input_dim=1))
-    model.add(LSTM(10, activation='relu', input_shape=(d['train_X'].shape[1], d['train_X'].shape[2])))
-    model.add(Dense(32))
-    model.add(Dense(1))
+    model.add(LSTM(10, activation='relu', input_shape=(d['train_X'].shape[1], d['train_X'].shape[2]), return_sequences=True))
+    model.add(LSTM(128))
+    model.add(Dense(32, activation='relu'))
+    model.add(Dense(1, activation='sigmoid'))
     model.compile(loss='mean_squared_error', optimizer='adam')
-
-    # # create and fit the LSTM network
-    # model = Sequential()
-    # model.add(LSTM(4, input_dim=1))
-    # model.add(Dense(1))
-    # model.compile(optimizer='adam', loss='mean_squared_error')
 
     if allow_print:
         model.summary()
@@ -45,16 +39,16 @@ def classify(**args):
     # train and evaluate
     model.fit(d['train_X'], d['train_Y'], epochs=d['epochs'], batch_size=d['batch_size'], verbose=2)
 
-
-    pred_coordinates = predict_synthetic_new(model, d['startpoints'], d['lookback'])
-
-    #pred_coordinates = reverse_data(pred_coordinates, d['scaler'], d['tesselation'])
-    #print(pred_coordinates.shape)
-    test = reverse_data(d['test'], d['scaler'], d['tesselation'], test=True)
-
-    #output_df = generate_output_df(test, pred_coordinates)
+    pred = predict_synthetic_new(model, d['startpoints'], d['lookback'])
     
-    #save_results(output_df)
+    pred = reverse_data(pred, d['scaler'], d['tesselation'])
+    test = reverse_data(d['test'], d['scaler'], d['tesselation'])
+    train =reverse_data(d['train'], d['scaler'], d['tesselation'])
+
+
+    save_as_geojson(test,pred,train,train_=True)
+    save_csv(test,pred,train,train_=False)
+    
     return
 
 
@@ -106,11 +100,21 @@ if __name__ == '__main__':
     parser.add_argument(
         '-lb', '--lookback',
         type=int,
-        default=3,
+        default=10,
         help='Number of lookbacks in dataset',
         dest='lookback_choice'
 
     )
+
+    parser.add_argument(
+    '-s', '--trainsize',
+    type=int,
+    default=0.80,
+    help='Size of the training data split',
+    dest='trainsize'
+
+    )
+
     parser.add_argument(
         '-n', '--normalisation',
         type=int,
