@@ -7,79 +7,8 @@ from sklearn.preprocessing import MinMaxScaler
 from scipy.interpolate import interp1d
 import s2sphere
 from geojson import LineString, Feature, FeatureCollection, dump
-import itertools
 import random
 import h3
-
-
-def add_s2sphere(lat, lng):
-    """
-    Add Cell ID by s2sphere
-
-    :param lat: Latitude
-    :param lng: Longitude
-    :returns:   Unique cell ID 
-    """
-
-    r = s2sphere.RegionCoverer()
-
-    r.max_level = 20
-    r.min_level = 5
-    r.max_cells = 5000
-
-    cellIDs = []
-    for i in range(0, len(lat)):
-        p = s2sphere.LatLng.from_degrees(float(lat[i]), float(lng[i]))
-        c = s2sphere.CellId.from_lat_lng(p)
-        cellIDs.append(c.id())
-
-    return cellIDs
-
-def add_h3(lat,lng, resolution=13):
-    """
-    Add unique cell Id by Uber H3 for each coordinate pair
-    
-    :param lat:         List of Latitudes
-    :param lng:         List of Longitudes
-    :param resolution:  Controls the size of the hexagon and the number of unique indexes (0 is coarsest and 15 is finest resolution), see https://h3geo.org/docs/core-library/restable/
-    :returns:           List with h3 indexes of the coordinates
-    """
-
-    h3_indexes = []
-    for i in range(0, len(lat)):
-        index = h3.geo_to_h3(lat[i], lng[i], resolution) # Indexes the location at the specified resolution, returning the index of the cell containing the location
-        index = h3.string_to_h3(index) # Converts the string representation to H3Index (uint64_t) representation.
-        h3_indexes.append(index) 
-
-    return h3_indexes
-
-
-def predict_synthetic_new(model, startpoints, lookback):
-    
-    while startpoints.shape[1] < 500:
-        predict = model.predict(startpoints[:, -lookback:, :])
-        predict = np.reshape(predict, (predict.shape[0], predict.shape[1], 1))
-        startpoints = np.hstack((startpoints, predict))
-
-    return startpoints
-
-def reverse_h3(h3_indexes):
-    """
-    Convert h3 indexes to X and Y coordinate pairs
-    
-    :param h3_indexes:  List of h3 indexes as H3Index (uint64_t)
-    :returns:           List of X and Y coordinates
-    """
-
-    coordinates = []
-    for sample in h3_indexes:
-        new_sample = []
-        for index in sample:
-            h3_string = h3.h3_to_string(index) # Converts an H3 64-bit integer index to a hexadecimal string.
-            geo = h3.h3_to_geo(h3_string) # Return the center point of an H3 cell as a lat/lng pair.
-            new_sample.append(geo)
-        coordinates.append(new_sample)
-    return np.array(coordinates)
 
 
 def repeat_and_collate(classify_fn, **args):
@@ -114,6 +43,74 @@ def print_dataset_info(dataset):
             print(f'\t\t{k:<13} : {v},')
     print('\t}\n')
 
+
+
+def add_s2sphere(lat, lng):
+    """
+    Add Cell ID by s2sphere
+
+    :param lat: Latitude
+    :param lng: Longitude
+    :returns:   Unique cell ID 
+    """
+
+    r = s2sphere.RegionCoverer()
+
+    r.max_level = 20
+    r.min_level = 5
+    r.max_cells = 5000
+
+    cellIDs = []
+    for i in range(0, len(lat)):
+        p = s2sphere.LatLng.from_degrees(float(lat[i]), float(lng[i]))
+        c = s2sphere.CellId.from_lat_lng(p)
+        cellIDs.append(c.id())
+    return cellIDs
+
+def reverse_s2sphere(cell_ids):
+    """
+    Convert s2sphehere Cell Ids to X and Y coordinate pairs
+
+    :param cell_ids:    List of cell IDs
+    :returns:           List of X and Y coordinates as tuples
+    """
+    #make list of cellIDs
+    cellId = []
+    for i in range(0, len(cell_ids)):
+        cellId.append(cell_ids[i][0])
+    cellId = list(map(int, cellId))
+
+    #get lat and lng from CellIDs
+    map_lat = []
+    map_lng = []
+    for i in range(0, len(cell_ids)):
+        ll = str(s2sphere.CellId(cellId[i]).to_lat_lng())
+        latlng = ll.split(',', 1)
+        lat = latlng[0].split(':', 1)
+        map_lat.append(float(lat[1]))
+        map_lng.append(float(latlng[1]))
+    
+    pred_coordinates = list(zip(map_lat, map_lng))
+
+    return pred_coordinates
+
+def predict_synthetic_new(model, startpoints, lookback):
+    """
+    Given the trained model, predict trajectories of length 500 for the startpoints of the test set given a lookback length
+    :param model:           Trained LSTM model
+    :param startpoints:     Array of n startpoints of the test trajectories
+    :param lookback:        Int of lookback n
+    :returns:               Array of trajectories of length 500
+    """
+
+    while startpoints.shape[1] < 500:
+        predict = model.predict(startpoints[:, -lookback:, :])
+        predict = np.reshape(predict, (predict.shape[0], predict.shape[1], 1))
+        startpoints = np.hstack((startpoints, predict))
+    return startpoints
+
+
+
 def shuffle_trips(df):
     """
     Shuffle trips in the dataset so trips of the same user end up in the train and in the test set
@@ -127,7 +124,7 @@ def shuffle_trips(df):
     df = pd.concat(groups).reset_index(drop=True)
     return df
 
-def train_test_split(df, train_size=0.8):
+def train_test_split(df, train_size):
     """
     Split the DataFrame into a train and test DataFrame with a given train_size
 
@@ -141,7 +138,7 @@ def train_test_split(df, train_size=0.8):
     test = df.loc[df['TRIP_ID|integer'].isin(test_trips)]
     return train, test
 
-def prepare_dataset(dataset_choice, batchsize, look_back, tesselation, epochs, normalisation=2):
+def prepare_dataset(dataset_choice, batchsize, look_back, tesselation, epochs, trainsize, normalisation):
     """
     Provides data generators, labels and other information for selected dataset.
 
@@ -190,67 +187,59 @@ def prepare_dataset(dataset_choice, batchsize, look_back, tesselation, epochs, n
 
     df = shuffle_trips(df)
 
-    df_train, df_test = train_test_split(df, train_size=0.8)
+    df_train, df_test = train_test_split(df, train_size=trainsize)
 
     train = interpolate_tesselation(df_train, tesselation= tess_function)
     test = interpolate_tesselation(df_test, tesselation= tess_function)
-    startpoints = get_startpoints(test)
+    startpoints = get_startpoints(test, look_back)
 
     #normalize and reshape
     scaler = MinMaxScaler(feature_range=(0, 1))
 
     train_shape = train.shape
-    train = train.reshape(-1,1)
-    train = scaler.fit_transform(train)
+    train = scaler.fit_transform(train.reshape(-1,1))
     train = np.reshape(train, (train_shape))
 
     startpoints_shape = startpoints.shape
-    startpoints = startpoints.reshape(-1,1)
-    startpoints = scaler.fit_transform(startpoints)
+    startpoints = scaler.transform(startpoints.reshape(-1,1))
     startpoints = np.reshape(startpoints, (startpoints_shape))
     
+    test_shape = test.shape
+    test = scaler.transform(test.reshape(-1,1))
+    test = np.reshape(test, (test_shape[0], test_shape[1], 1))
 
-    trainX, trainY = final_lookback(train, previous=look_back)
+    trainX, trainY = lookback(train, previous=look_back)
     trainX = np.reshape(trainX, (trainX.shape[0], trainX.shape[1], 1))
-
-
-    #OLD VERSION:
-    # #train test split
-    # train, startpoints = split_data(df)
-    # #normalize and reshape
-    # train, train_scaler = norm_function(train)
-    # startpoints, start_scaler = norm_function(startpoints)
-    # test = save_test_set(df)
-    # #Create dataset with lookback
-    # #look_back=2
-    # trainX, trainY = data_lookback(train, look_back)
-    # # reshape input to be [samples, time steps, features]
-    # trainX = np.reshape(trainX, (trainX.shape[0], trainX.shape[1], 1))
-
+    train = np.reshape(train, (train_shape[0], train_shape[1], 1))
 
     return {
         'dataset_name' : data_name,
         'train_X'      : trainX,
         'train_Y'      : trainY,
         'test'         : test,
+        'train'        : train,
         'startpoints'  : startpoints,
         'tesselation'  : tess_function,
         'lookback'     : look_back,
         'batch_size'   : batchsize,
         'norm_function': norm_function.__name__,
-        'scaler' : scaler,
-        #'start_scaler' : start_scaler,
+        'scaler'       : scaler,
         'epochs'       : epochs,
         'data_str'     : data_str}
 
-def reverse_data(data, scaler, tesselation, test=False):
 
+
+def reverse_data(data, scaler, tesselation):
+    """
+    Inverse the Minmax scaler and inverse the tesselation back to XY coordinates
+    :param data:    Normalized tesselated data
+    :param scaler:  Fitted Min max scaler
+    :tesselation:   Which tesselation was used
+    :returns:       Array of XY coordinates
+    """
     new_data = []
     for sample in data:
-        if test==False:
-            sample = scaler.inverse_transform(sample)
-        elif test==True:
-            pass
+        sample = scaler.inverse_transform(sample)
         if tesselation == 's2sphere':
             sample = reverse_s2sphere(sample)
         elif tesselation == 'h3':
@@ -260,9 +249,7 @@ def reverse_data(data, scaler, tesselation, test=False):
     return np.array(new_data)
 
 
-
-
-def interpolate_tesselation(df, tesselation='h3'):
+def interpolate_tesselation(df, tesselation):
     """
     Takes DataFrame and interpolates the X and Y coordinates, converts them into tesselation cell IDs
 
@@ -284,18 +271,29 @@ def interpolate_tesselation(df, tesselation='h3'):
     return np.array(data)
 
 
-def get_startpoints(data):
+def get_startpoints(data, lookback):
+    """
+    Given the test data, get the n startpoints of each test trajectory depending on the number of lookbacks used for the training data
+    :param data:        Array containing the test data after normalisation and tesselation
+    :param lookback:    Lookback number n 
+    :returns:           Array containing n startpoints for each test trajectory
+    """
     startpoints = []
     for trip in data:
-        startpoints.append(trip[0:3])
+        startpoints.append(trip[0:lookback])
     startpoints = np.array(startpoints)
     startpoints = np.reshape(startpoints, (startpoints.shape[0], startpoints.shape[1], 1))
     return startpoints
 
-def final_lookback(df, previous=3):
+
+
+def lookback(df, previous=3):
     """
-    Creates X and Y data with given lookback
-    TODO
+    Create data with a lookback
+
+    :param df:          DataFrame with location data
+    :param previous:    Lookback number
+    :returns:           Tuple of arrays of X and Y data with a lookback  
     """
     dataX, dataY = [], []
     for traj in df:
@@ -307,6 +305,127 @@ def final_lookback(df, previous=3):
             dataX.append(a)
             dataY.append(np.array(b))
     return np.array(dataX), np.array(dataY)
+
+def interpolate(x,y, num_points=500):
+    """
+    Interpolate a trajectory/sequence of X and Y coordinates to a fixed length of num_points.
+    https://stackoverflow.com/questions/51512197/python-equidistant-points-along-a-line-joining-set-of-points/51515357
+
+    :param X:           X coordinate
+    :param Y:           Y coordinate
+    :param num_points:  Length of the new trajectory/Number of X and Y coordinate pairs
+    :returns:           Two lists of the length num_points with new X and Y coordinates
+    """
+    
+    # Linear length on the line
+    distance = np.cumsum(np.sqrt( np.ediff1d(x, to_begin=0)**2 + np.ediff1d(y, to_begin=0)**2))
+    distance = distance/distance[-1]
+
+    fx, fy = interp1d(distance, x), interp1d(distance, y)
+
+    alpha = np.linspace(0, 1, num_points)
+    x_regular, y_regular = fx(alpha), fy(alpha)
+
+    return x_regular, y_regular
+
+
+
+def save_csv(test, synth, train, train_=False):
+    """
+    Saves train, test and synthetic data as csv file
+
+    :param test:    Test set
+    :param train:   Train set
+    :param synth:   Synthetic generated data
+    :param train_:  If true, train data included
+    :returns:       Saves csv file
+    """
+
+    with open('config/datasets.yaml') as cnf:
+        dataset_configs = yaml.safe_load(cnf)
+        predictions_path = dataset_configs['synthetic_csv_path']
+
+    type = []
+    coordinates = []
+
+    m,n,r = test.shape
+    for trip in range(0, m-1):
+        type.append('original')
+        coords = test[trip, :, :]
+        coords = [tuple(x) for x in coords]
+        coordinates.append(list(coords))
+
+    m,n,r = synth.shape
+    for trip in range(0,m-1):
+        type.append('synthetic')
+        coords = synth[trip, :, :]
+        coords = [tuple(x) for x in coords]
+        coordinates.append(list(coords))
+
+    if train_==True:
+        m,n,r = train.shape
+        for trip in range(0,m-1):
+            type.append('training data')
+            coords = train[trip, :, :]
+            coords = [tuple(x) for x in coords]
+            coordinates.append(list(coords))
+
+    data = pd.DataFrame(columns=['Type', 'Coordinates'])
+    data['Type'] = type
+    data['Coordinates'] = coordinates
+
+    data.to_csv(predictions_path)
+
+
+def save_as_geojson(test, synth, train, train_=False):
+    """
+    Saves train, test and synthetic data as geojson for visualisation in R
+
+    :param test:    Test set
+    :param train:   Train set
+    :param synth:   Synthetic generated data
+    :param train_:  If true, train data included
+    :returns:       Saves geojson file
+    """
+
+    with open('config/datasets.yaml') as cnf:
+        dataset_configs = yaml.safe_load(cnf)
+        geojson_path = dataset_configs['geojson_path']
+
+    type = []
+    coordinates = []
+
+    m,n,r = test.shape
+    for trip in range(0, m-1):
+        type.append('original')
+        coords = test[trip, :, :]
+        coords = [tuple(x) for x in coords]
+        coordinates.append(LineString(coords))
+
+    m,n,r = synth.shape
+    for trip in range(0,m-1):
+        type.append('synthetic')
+        coords = synth[trip, :, :]
+        coords = [tuple(x) for x in coords]
+        coordinates.append(LineString(coords))
+
+    if train_==True:
+        m,n,r = train.shape
+        for trip in range(0,m-1):
+            type.append('training data')
+            coords = train[trip, :, :]
+            coords = [tuple(x) for x in coords]
+            coordinates.append(LineString(coords))
+
+    features = []
+
+    for i in range(len(type)):
+        features.append(Feature(geometry=coordinates[i], properties={"Type": type[i]}))
+
+    feature_collection = FeatureCollection(features)
+    with open(geojson_path, 'w') as f:
+        dump(feature_collection, f)
+
 
 def normalise_minmax(sample):
     """
@@ -345,219 +464,4 @@ def trajectory_length(line):
     :returns:       Distance of trajectory in meters
     """
     return calculate_distance(line, Unit.meters)
-
-
-def split_data(df, split=0.9):
-    """
-    Split dataset in train and test
-
-    :param df:  DataFrame containing the whole dataset
-    :split:     Split for train and test
-    :returns:   Array of train dataset and array of startpoints of the test dataset
-    """
-    #TODO split users into diff datasets?
-    num_trips = len(df['TRIP_ID|integer'].unique())
-    counter = 0
-    test = []
-    train = []
-    startpoints =  []
-
-    for tripID in df['TRIP_ID|integer'].unique():
-            counter +=1
-            trip = df.loc[df['TRIP_ID|integer'] == tripID]
-            X = trip['X']
-            Y = trip['Y']
-            X, Y = interpolate(X,Y)
-            cellID = add_s2sphere(X,Y)
-
-            if counter < num_trips*split:
-                train.append(cellID)
-            else:
-                startpoints.append(cellID[0])
-                test.append(cellID)
-    
-    return np.array(train), np.array(startpoints)
-         
-
-def data_lookback(df, previous=1):
-    """
-    Create data with a lookback
-
-    :param df:          DataFrame with location data
-    :param previous:    Lookback
-    :returns:           Tuple of arrays of X and Y data with a lookback  
-    """
-
-    dataX, dataY = [], []
-    for i in range(len(df)-previous-1):
-        a = df[i:(i+previous), 0]
-        dataX.append(a)
-        dataY.append(df[i + previous, 0])
-    return np.array(dataX), np.array(dataY)
-
-
-
-def interpolate(x,y, num_points=500):
-    """
-    Interpolate a trajectory/sequence of X and Y coordinates to a fixed length of num_points.
-    https://stackoverflow.com/questions/51512197/python-equidistant-points-along-a-line-joining-set-of-points/51515357
-
-    :param X:           X coordinate
-    :param Y:           Y coordinate
-    :param num_points:  Length of the new trajectory/Number of X and Y coordinate pairs
-    :returns:           Two lists of the length num_points with new X and Y coordinates
-    """
-    
-    # Linear length on the line
-    distance = np.cumsum(np.sqrt( np.ediff1d(x, to_begin=0)**2 + np.ediff1d(y, to_begin=0)**2))
-    distance = distance/distance[-1]
-
-    fx, fy = interp1d(distance, x), interp1d(distance, y)
-
-    alpha = np.linspace(0, 1, num_points)
-    x_regular, y_regular = fx(alpha), fy(alpha)
-
-    return x_regular, y_regular
-
-
-
-
-def save_test_set(df, split=0.8):
-    """
-    Returns a list of coordinates in tuple form
-    """
-
-    num_trips = len(df['TRIP_ID|integer'].unique())
-    counter = 0
-    test = []
-    for tripID in df['TRIP_ID|integer'].unique():
-            counter +=1
-            trip = df.loc[df['TRIP_ID|integer'] == tripID]
-            X, Y = interpolate(trip['X'],trip['Y'], num_points=500)
-            if counter < num_trips*split:
-                pass
-            else:
-                for pair in ((X[i], Y[i]) for i in range(min(len(X), len(Y)))):
-                    test.append(pair)  
-
-    return test
-
-def generate_output_df(test_coordinates, pred_coordinates, num_points=500):
-    
-    #divide into trips and add type and append to dataframe
-    coordinates = []
-    type = []
-
-    for x in range(1,int(len(test_coordinates)/num_points)+1):
-        num = num_points*x
-        coords = test_coordinates[:num]
-        type.append('original')
-        coordinates.append(LineString(coords))
-
-    for x in range(1,int(len(pred_coordinates)/num_points)+1):
-        num = num_points*x
-        coords = pred_coordinates[:num]
-        type.append('synthetic')
-        coordinates.append(LineString(coords))
-
-    data = pd.DataFrame(columns=['Type', 'Coordinates'])
-    data['Type'] = type
-    data['Coordinates'] = coordinates
-    
-    return data
-
-def save_results(df):
-    #output_df.to_csv('/Users/jh/github/freemove/data/synthetic_data.csv')
-    #save synthetic trajectories to csv
-    #pred_df = pd.DataFrame.from_dict(output)
-    #pred_df.to_csv('/Users/jh/github/freemove/data/predictions_both.csv')
-
-
-    with open('config/datasets.yaml') as cnf:
-        dataset_configs = yaml.safe_load(cnf)
-        predictions_path = dataset_configs['predictions_path']
-        predictions_str = dataset_configs['predictions_str']
-        predictions_name = dataset_configs['predictions_name']
-        geo_path = dataset_configs['geo_path']
-        geo_str = dataset_configs['geo_str']
-        geo_name = dataset_configs['geo_name']
-
-    save_as_geojson(df, geo_path)
-    df.to_csv(predictions_path)
-
-
-def save_as_geojson(df, path):
-
-    features = []
-    type = df['Type']
-    coordinates = df['Coordinates']
-    for i in range(len(df)):
-        features.append(Feature(geometry=coordinates[i], properties={"Type": type[i]}))
-
-    feature_collection = FeatureCollection(features)
-    with open(path, 'w') as f:
-        dump(feature_collection, f)
-
-
-# def predict_synthetic(model, startpoints, scaler, tesselation):
-    
-#     trajectory = []
-
-#     #predict synthetic data
-#     for point in startpoints:
-#         point = np.array(point)
-#         point = point.reshape(-1,1)
-#         predict = point
-#         #predict = model.predict(point)
-
-#         #trajectory = []
-#         if scaler == None:
-#             trajectory.append(predict)
-#         else:
-#             trajectory.append(scaler.inverse_transform(predict)) #inverse normalization
-#         for i in range(0,499):
-#             p = np.reshape(predict, (predict.shape[0], predict.shape[1], 1))
-#             predict = model.predict(p)
-#             if scaler==None:
-#                 trajectory.append(predict)
-#             else:
-#                 trajectory.append(scaler.inverse_transform(predict)) #inverse normalization
-
-#     s_c_id = list(itertools.chain(*trajectory)) #change to one iterable
-
-#     if tesselation == 1:
-#         pass
-#     if tesselation == 0:
-#         pred_coordinates = reverse_s2sphere(s_c_id)
-
-#     return pred_coordinates
-
-
-
-def reverse_s2sphere(cell_ids):
-    """
-    Convert s2sphehere Cell Ids to X and Y coordinate pairs
-
-    :param cell_ids:    List of cell IDs
-    :returns:           List of X and Y coordinates as tuples
-    """
-    #make list of cellIDs
-    cellId = []
-    for i in range(0, len(cell_ids)):
-        cellId.append(cell_ids[i][0])
-    cellId = list(map(int, cellId))
-
-    #get lat and lng from CellIDs
-    map_lat = []
-    map_lng = []
-    for i in range(0, len(cell_ids)):
-        ll = str(s2sphere.CellId(cellId[i]).to_lat_lng())
-        latlng = ll.split(',', 1)
-        lat = latlng[0].split(':', 1)
-        map_lat.append(float(lat[1]))
-        map_lng.append(float(latlng[1]))
-    
-    pred_coordinates = list(zip(map_lat, map_lng))
-
-    return pred_coordinates
 
