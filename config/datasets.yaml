@@ -1,15 +1,15 @@
-tapas_big_path : '/Users/jh/github/freemove/data/TAPAS/tapas_big_single_coordinates.csv'
+tapas_big_path : '/tapas_big_single_coordinates.csv'
 tapas_big_str  : 'TAPAS full dataset'
 tapas_big_name : 'tapas_big'
 
-tapas_small_path : '/Users/jh/github/freemove/data/TAPAS/tapas_single_coordinates.csv'
+tapas_small_path : '/tapas_single_coordinates.csv'
 tapas_small_str  : 'TAPAS subset dataset'
 tapas_small_name : 'tapas_small'
 
-synthetic_csv_path: '/Users/jh/github/freemove/data/synthetic.csv'
+synthetic_csv_path: 'github/freemove/data/synthetic.csv'
 synthetic_csv_str: 'Synthetic data CSV file'
 synthetic_csv_name: 'synthetic_csv'
 
-geojson_path: '/Users/jh/github/freemove/data/synthetic.geojson'
+geojson_path: 'github/freemove/data/synthetic.geojson'
 geojson_str: 'Synthetic data Geojson file'
 geojson_name: 'synthetic_geojson'
