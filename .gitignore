@@ -127,3 +127,23 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+.vscode/launch.json
+data/tapas_big_single_coordinates.csv
+data/tapas_geo.geojson
+data/tapas_single_coordinates.csv
+data/xyz.csv
+data
+config/datasets.yaml
+.gitignore
+.DS_Store
+freemove_tf/pyvenv.cfg
+freemove_tf/bin/activate
+freemove_tf/bin/activate.csh
+freemove_tf/bin/activate.fish
+freemove_tf/bin/Activate.ps1
+freemove_tf/bin/pip
+freemove_tf/bin/pip3
+freemove_tf/bin/pip3.9
+freemove_tf/bin/python
+freemove_tf/bin/python3
+freemove_tf/bin/python3.9
